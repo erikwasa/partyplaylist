@@ -14,9 +14,13 @@ Implemented so far:
 - Host token storage and refresh in Table Storage
 - Spotify track search through the host token
 - Spotify device discovery
-- Room creation
+- Room creation with browser-local host control protection
+- Guest link QR code generation
 - Queue item creation and listing
+- Duplicate track detection for active queue items
+- Host moderation controls to remove and requeue songs
 - Manual `queue-next` endpoint that sends the next waiting item to Spotify
+- Manual `play-next` endpoint that starts the next waiting item immediately on Spotify
 - Local MVP frontend served from the Functions app at `/api/app`
 
 ## Local prerequisites
@@ -85,18 +89,34 @@ Host flow:
 3. In Party Playlist, click **Refresh devices**.
 4. Select the playback device and click **Save device**.
 5. Click **Create room**.
-6. Copy the generated guest link.
-7. Keep the page open to view the queue.
-8. Click **Queue next** to send the next waiting song to Spotify.
+6. Share the generated guest link or QR code.
+7. Keep the host browser tab open to view and moderate the queue.
+8. Click **Queue next** to add the next waiting song to Spotify's queue.
+9. Click **Play next now** to immediately start the next waiting song on Spotify.
+10. Use **Remove** and **Requeue** for simple moderation.
 
 Guest flow:
 
-1. Open the guest link.
+1. Open the guest link or scan the QR code.
 2. Enter a name or alias.
 3. Search for a song.
 4. Click **Add** on a search result.
 
 The page polls the queue every few seconds. This is intentionally simple for the MVP; a later version can move the frontend to Azure Static Web Apps and replace polling with SignalR.
+
+## Host controls
+
+Each room gets a generated host control value when it is created. The frontend stores it in `localStorage` for that browser and sends it as an `X-Host-Code` header for host-only actions.
+
+Host-only endpoints currently include:
+
+- saving the room playback device
+- queueing the next song to Spotify
+- starting the next song immediately
+- removing queue items
+- requeueing removed items
+
+Guest links and QR codes do not include the host control value.
 
 ## Spotify redirect URI
 
@@ -136,11 +156,17 @@ Invoke-RestMethod http://127.0.0.1:7071/api/devices
 - `GET /api/auth/callback`
 - `GET /api/devices`
 - `POST /api/rooms`
+- `GET /api/rooms/{roomId}/qr`
 - `POST /api/rooms/{roomId}/device`
 - `GET /api/search?query=...`
 - `GET /api/rooms/{roomId}/queue`
 - `POST /api/rooms/{roomId}/queue`
 - `POST /api/rooms/{roomId}/queue-next`
+- `POST /api/rooms/{roomId}/play-next`
+- `POST /api/rooms/{roomId}/queue/{itemId}/remove`
+- `POST /api/rooms/{roomId}/queue/{itemId}/requeue`
+
+Host-only endpoints require the `X-Host-Code` header.
 
 ## Example queue request
 
