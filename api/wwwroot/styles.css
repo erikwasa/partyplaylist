@@ -11,7 +11,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -27,7 +28,8 @@ button,
   text-decoration: none;
 }
 
-input {
+input,
+select {
   border: 1px solid lightgray;
   border-radius: 0.9rem;
   min-width: 0;
@@ -87,9 +89,14 @@ h2 {
   font-size: 1.35rem;
 }
 
-.lede {
+.lede,
+.helper-text {
   color: dimgray;
   margin-top: 0.5rem;
+}
+
+.helper-text {
+  font-size: 0.92rem;
 }
 
 .eyebrow,
@@ -129,12 +136,17 @@ h2 {
   flex: 1;
 }
 
-.room-card {
+.room-card,
+.device-panel {
   border: 1px solid lightgray;
   border-radius: 1rem;
   display: grid;
   gap: 1rem;
   padding: 1rem;
+}
+
+.device-panel {
+  background: #fafafa;
 }
 
 .results,
