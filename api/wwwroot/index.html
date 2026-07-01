@@ -26,6 +26,20 @@
         <button id="create-room" type="button">Create room</button>
       </div>
 
+      <div class="device-panel">
+        <label>
+          Spotify playback device
+          <select id="device-select">
+            <option value="">Use current active device</option>
+          </select>
+        </label>
+        <div class="button-row">
+          <button id="refresh-devices" type="button">Refresh devices</button>
+          <button id="save-device" type="button">Save device</button>
+        </div>
+        <p class="helper-text">Open Spotify and start playback on the host device first. Restricted devices cannot be controlled by the Web API.</p>
+      </div>
+
       <div id="room-card" class="room-card is-hidden">
         <div>
           <span class="label">Room ID</span>

@@ -18,6 +18,11 @@ public sealed class CreateRoomRequest
     public string? ActiveDeviceId { get; set; }
 }
 
+public sealed class UpdateRoomDeviceRequest
+{
+    public string? ActiveDeviceId { get; set; }
+}
+
 public sealed class AddQueueItemRequest
 {
     public string? TrackUri { get; set; }
@@ -33,6 +38,17 @@ public sealed class TrackSearchResult
     public string ArtistName { get; init; } = string.Empty;
     public string? AlbumImageUrl { get; init; }
     public int DurationMs { get; init; }
+}
+
+public sealed class SpotifyDeviceResult
+{
+    public string? Id { get; init; }
+    public string Name { get; init; } = string.Empty;
+    public string Type { get; init; } = string.Empty;
+    public bool IsActive { get; init; }
+    public bool IsRestricted { get; init; }
+    public bool SupportsVolume { get; init; }
+    public int? VolumePercent { get; init; }
 }
 
 public sealed class SpotifyTokenResponse
