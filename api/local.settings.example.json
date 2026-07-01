@@ -6,6 +6,6 @@
     "Tables__ConnectionString": "UseDevelopmentStorage=true",
     "Spotify__ClientId": "YOUR_SPOTIFY_CLIENT_ID",
     "Spotify__ClientSecret": "YOUR_SPOTIFY_CLIENT_SECRET",
-    "Spotify__RedirectUri": "http://localhost:7071/api/auth/callback"
+    "Spotify__RedirectUri": "http://127.0.0.1:7071/api/auth/callback"
   }
 }

@@ -37,6 +37,12 @@ notepad local.settings.json
 
 Fill in your Spotify client id, client secret, and redirect URI in `local.settings.json`.
 
+For local Spotify auth, use the loopback IP address rather than `localhost`:
+
+```json
+"Spotify__RedirectUri": "http://127.0.0.1:7071/api/auth/callback"
+```
+
 Start Azurite in a separate PowerShell window:
 
 ```powershell
@@ -53,13 +59,13 @@ func start
 Test health:
 
 ```powershell
-Invoke-RestMethod http://localhost:7071/api/health
+Invoke-RestMethod http://127.0.0.1:7071/api/health
 ```
 
 Start Spotify login in a browser:
 
 ```text
-http://localhost:7071/api/auth/login
+http://127.0.0.1:7071/api/auth/login
 ```
 
 ## Spotify redirect URI
@@ -67,8 +73,12 @@ http://localhost:7071/api/auth/login
 Add this redirect URI in the Spotify Developer Dashboard for local development:
 
 ```text
-http://localhost:7071/api/auth/callback
+http://127.0.0.1:7071/api/auth/callback
 ```
+
+The value in Spotify Developer Dashboard and `Spotify__RedirectUri` must match exactly, including scheme, host, port, path, case, and trailing slash behavior.
+
+After changing `local.settings.json`, restart the Functions host so the app reloads the new redirect URI.
 
 ## API endpoints
 
@@ -93,7 +103,7 @@ $body = @{
 
 Invoke-RestMethod `
   -Method Post `
-  -Uri "http://localhost:7071/api/rooms/<roomId>/queue" `
+  -Uri "http://127.0.0.1:7071/api/rooms/<roomId>/queue" `
   -Body $body `
   -ContentType "application/json"
 ```
