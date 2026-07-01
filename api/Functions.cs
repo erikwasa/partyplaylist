@@ -96,8 +96,40 @@ public sealed class SearchFunction
             return await request.JsonAsync(new { error = "Missing query parameter." }, HttpStatusCode.BadRequest);
         }
 
-        var results = await _spotify.SearchTracksAsync(searchText);
-        return await request.JsonAsync(results);
+        try
+        {
+            var results = await _spotify.SearchTracksAsync(searchText);
+            return await request.JsonAsync(results);
+        }
+        catch (SpotifyApiException ex)
+        {
+            return await request.SpotifyErrorAsync(ex);
+        }
+    }
+}
+
+public sealed class DeviceFunctions
+{
+    private readonly SpotifyService _spotify;
+
+    public DeviceFunctions(SpotifyService spotify)
+    {
+        _spotify = spotify;
+    }
+
+    [Function("GetDevices")]
+    public async Task<HttpResponseData> GetDevices(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "devices")] HttpRequestData request)
+    {
+        try
+        {
+            var devices = await _spotify.GetAvailableDevicesAsync();
+            return await request.JsonAsync(devices);
+        }
+        catch (SpotifyApiException ex)
+        {
+            return await request.SpotifyErrorAsync(ex);
+        }
     }
 }
 
@@ -120,14 +152,62 @@ public sealed class RoomFunctions
         var hostToken = await _spotify.GetValidHostTokenAsync();
         var room = await _storage.CreateRoomAsync(hostToken.SpotifyUserId, body.ActiveDeviceId);
 
-        return await request.JsonAsync(new
-        {
-            roomId = room.RowKey,
-            room.Status,
-            room.ActiveDeviceId,
-            room.CreatedAt
-        }, HttpStatusCode.Created);
+        return await request.JsonAsync(ToRoomResponse(room), HttpStatusCode.Created);
     }
+
+    [Function("SetRoomDevice")]
+    public async Task<HttpResponseData> SetDevice(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "rooms/{roomId}/device")] HttpRequestData request,
+        string roomId)
+    {
+        var room = await _storage.GetRoomAsync(roomId);
+        if (room is null)
+        {
+            return await request.JsonAsync(new { error = "Room not found." }, HttpStatusCode.NotFound);
+        }
+
+        var body = await request.ReadJsonAsync<UpdateRoomDeviceRequest>() ?? new UpdateRoomDeviceRequest();
+        var activeDeviceId = string.IsNullOrWhiteSpace(body.ActiveDeviceId) ? null : body.ActiveDeviceId.Trim();
+
+        if (activeDeviceId is not null)
+        {
+            try
+            {
+                var devices = await _spotify.GetAvailableDevicesAsync();
+                var selectedDevice = devices.FirstOrDefault(device => device.Id == activeDeviceId);
+                if (selectedDevice is null)
+                {
+                    return await request.JsonAsync(new
+                    {
+                        error = "Selected Spotify device was not found. Refresh devices and try again."
+                    }, HttpStatusCode.BadRequest);
+                }
+
+                if (selectedDevice.IsRestricted)
+                {
+                    return await request.JsonAsync(new
+                    {
+                        error = "Selected Spotify device is restricted and cannot be controlled through the Web API."
+                    }, HttpStatusCode.BadRequest);
+                }
+            }
+            catch (SpotifyApiException ex)
+            {
+                return await request.SpotifyErrorAsync(ex);
+            }
+        }
+
+        room = await _storage.SetRoomActiveDeviceAsync(room, activeDeviceId);
+        return await request.JsonAsync(ToRoomResponse(room));
+    }
+
+    private static object ToRoomResponse(RoomEntity room) => new
+    {
+        roomId = room.RowKey,
+        room.Status,
+        room.ActiveDeviceId,
+        room.CreatedAt
+    };
 }
 
 public sealed class QueueFunctions
@@ -197,10 +277,18 @@ public sealed class QueueFunctions
         }
 
         var token = await _spotify.GetValidHostTokenAsync();
-        await _spotify.QueueTrackAsync(token.AccessToken, item.TrackUri, room.ActiveDeviceId);
-        await _storage.UpdateQueueItemStatusAsync(item, QueueItemStatuses.QueuedToSpotify);
 
-        return await request.JsonAsync(new { queued = true, item = ToResponse(item) });
+        try
+        {
+            await _spotify.QueueTrackAsync(token.AccessToken, item.TrackUri, room.ActiveDeviceId);
+            await _storage.UpdateQueueItemStatusAsync(item, QueueItemStatuses.QueuedToSpotify);
+
+            return await request.JsonAsync(new { queued = true, item = ToResponse(item) });
+        }
+        catch (SpotifyApiException ex)
+        {
+            return await request.SpotifyErrorAsync(ex);
+        }
     }
 
     private static object ToResponse(QueueItemEntity item) => new
@@ -239,6 +327,26 @@ internal static class HttpRequestDataExtensions
         response.Headers.Add("Content-Type", "application/json; charset=utf-8");
         await response.WriteStringAsync(JsonSerializer.Serialize(body, JsonOptions));
         return response;
+    }
+
+    public static async Task<HttpResponseData> SpotifyErrorAsync(this HttpRequestData request, SpotifyApiException ex)
+    {
+        var noActiveDevice = string.Equals(ex.SpotifyReason, "NO_ACTIVE_DEVICE", StringComparison.OrdinalIgnoreCase);
+        var statusCode = noActiveDevice ? HttpStatusCode.Conflict : HttpStatusCode.BadGateway;
+        var hint = noActiveDevice
+            ? "Open Spotify on the host device, start playback, refresh devices, select the device, then try Queue next again."
+            : "Spotify rejected the request. Check the spotifyStatusCode and spotifyResponse details.";
+
+        return await request.JsonAsync(new
+        {
+            error = noActiveDevice ? "No active Spotify device found." : "Spotify request failed.",
+            ex.Operation,
+            spotifyStatusCode = ex.StatusCode,
+            spotifyReason = ex.SpotifyReason,
+            spotifyMessage = ex.SpotifyMessage,
+            spotifyResponse = ex.ResponseBody,
+            hint
+        }, statusCode);
     }
 
     public static IReadOnlyDictionary<string, string> ParseQuery(this HttpRequestData request)
