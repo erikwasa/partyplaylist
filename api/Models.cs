@@ -76,6 +76,7 @@ public sealed class RoomEntity : ITableEntity
     public DateTimeOffset? Timestamp { get; set; }
     public ETag ETag { get; set; }
     public string HostSpotifyUserId { get; set; } = string.Empty;
+    public string? HostCodeHash { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public string Status { get; set; } = "active";
     public string? ActiveDeviceId { get; set; }
