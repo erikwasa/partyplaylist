@@ -38,20 +38,23 @@ jobs:
 
       - name: Deploy Azure resources
         uses: azure/cli@v2
+        env:
+          SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
+          SPOTIFY_CLIENT_SECRET: ${{ secrets.SPOTIFY_CLIENT_SECRET }}
         with:
           inlineScript: |
             az deployment sub create \
               --name partyplaylist-${{ env.AZURE_ENVIRONMENT_NAME }}-${{ github.run_number }} \
-              --location ${{ env.AZURE_LOCATION }} \
+              --location "${{ env.AZURE_LOCATION }}" \
               --template-file infra/main.bicep \
               --parameters \
-                location=${{ env.AZURE_LOCATION }} \
-                resourceGroupName=${{ env.AZURE_RESOURCE_GROUP_NAME }} \
-                environmentName=${{ env.AZURE_ENVIRONMENT_NAME }} \
-                functionAppName=${{ env.AZURE_FUNCTIONAPP_NAME }} \
-                spotifyClientId='${{ secrets.SPOTIFY_CLIENT_ID }}' \
-                spotifyClientSecret='${{ secrets.SPOTIFY_CLIENT_SECRET }}' \
-                spotifyRedirectUri=https://${{ env.AZURE_FUNCTIONAPP_NAME }}.azurewebsites.net/api/auth/callback
+                location="${{ env.AZURE_LOCATION }}" \
+                resourceGroupName="${{ env.AZURE_RESOURCE_GROUP_NAME }}" \
+                environmentName="${{ env.AZURE_ENVIRONMENT_NAME }}" \
+                functionAppName="${{ env.AZURE_FUNCTIONAPP_NAME }}" \
+                spotifyClientId="$SPOTIFY_CLIENT_ID" \
+                spotifyClientSecret="$SPOTIFY_CLIENT_SECRET" \
+                spotifyRedirectUri="https://${{ env.AZURE_FUNCTIONAPP_NAME }}.azurewebsites.net/api/auth/callback"
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
