@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Party Playlist</title>
+  <link rel="stylesheet" href="/api/app/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Spotify party queue</p>
+        <h1>Party Playlist</h1>
+        <p class="lede">Create a room, share the link, and let friends add songs to the shared queue.</p>
+      </div>
+      <a class="spotify-link" href="/api/auth/login">Connect Spotify</a>
+    </header>
+
+    <section class="panel host-only" aria-labelledby="host-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Host</p>
+          <h2 id="host-title">Start the room</h2>
+        </div>
+        <button id="create-room" type="button">Create room</button>
+      </div>
+
+      <div id="room-card" class="room-card is-hidden">
+        <div>
+          <span class="label">Room ID</span>
+          <strong id="room-id"></strong>
+        </div>
+        <div>
+          <span class="label">Guest link</span>
+          <div class="copy-row">
+            <input id="guest-link" readonly>
+            <button id="copy-link" type="button">Copy</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="join-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Guest</p>
+          <h2 id="join-title">Join and request songs</h2>
+        </div>
+      </div>
+
+      <div class="form-grid">
+        <label>
+          Your name or alias
+          <input id="requested-by" autocomplete="nickname" placeholder="Ada">
+        </label>
+        <label>
+          Room ID
+          <input id="room-input" placeholder="Room ID">
+        </label>
+      </div>
+
+      <form id="search-form" class="search-row">
+        <input id="search-query" placeholder="Search for a track or artist" autocomplete="off">
+        <button type="submit">Search</button>
+      </form>
+
+      <div id="search-results" class="results" aria-live="polite"></div>
+    </section>
+
+    <section class="panel" aria-labelledby="queue-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Queue</p>
+          <h2 id="queue-title">Shared queue</h2>
+        </div>
+        <div class="button-row">
+          <button id="refresh-queue" type="button">Refresh</button>
+          <button id="queue-next" class="host-only" type="button">Queue next</button>
+        </div>
+      </div>
+
+      <ol id="queue-list" class="queue-list" aria-live="polite"></ol>
+    </section>
+
+    <p id="status" class="status" role="status" aria-live="polite"></p>
+  </main>
+
+  <script src="/api/app/app.js"></script>
+</body>
+</html>
