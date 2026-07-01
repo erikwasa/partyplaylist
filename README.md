@@ -4,9 +4,9 @@ A small social web app for parties and gatherings where a host signs in with Spo
 
 The app does not stream music. Spotify handles playback through the host account and the selected Spotify Connect device. This repository starts with a local-first Azure Functions backend using .NET 10 isolated worker and Azure Table Storage/Azurite.
 
-## Backend status
+## Current status
 
-Implemented in this PR:
+Implemented so far:
 
 - Azure Functions isolated worker backend targeting .NET 10
 - `GET /api/health`
@@ -16,6 +16,7 @@ Implemented in this PR:
 - Room creation
 - Queue item creation and listing
 - Manual `queue-next` endpoint that sends the next waiting item to Spotify
+- Local MVP frontend served from the Functions app at `/api/app`
 
 ## Local prerequisites
 
@@ -68,6 +69,30 @@ Start Spotify login in a browser:
 http://127.0.0.1:7071/api/auth/login
 ```
 
+## Local demo UI
+
+After Spotify login succeeds, open the local app:
+
+```text
+http://127.0.0.1:7071/api/app
+```
+
+Host flow:
+
+1. Click **Create room**.
+2. Copy the generated guest link.
+3. Keep the page open to view the queue.
+4. Click **Queue next** to send the next waiting song to Spotify.
+
+Guest flow:
+
+1. Open the guest link.
+2. Enter a name or alias.
+3. Search for a song.
+4. Click **Add** on a search result.
+
+The page polls the queue every few seconds. This is intentionally simple for the MVP; a later version can move the frontend to Azure Static Web Apps and replace polling with SignalR.
+
 ## Spotify redirect URI
 
 Add this redirect URI in the Spotify Developer Dashboard for local development:
@@ -83,6 +108,7 @@ After changing `local.settings.json`, restart the Functions host so the app relo
 ## API endpoints
 
 - `GET /api/health`
+- `GET /api/app`
 - `GET /api/auth/login`
 - `GET /api/auth/callback`
 - `POST /api/rooms`
