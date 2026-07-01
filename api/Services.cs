@@ -90,7 +90,7 @@ public sealed class TableStorageService
         {
             RowKey = Guid.NewGuid().ToString("N")[..8],
             HostSpotifyUserId = hostSpotifyUserId,
-            ActiveDeviceId = activeDeviceId,
+            ActiveDeviceId = NormalizeDeviceId(activeDeviceId),
             CreatedAt = DateTimeOffset.UtcNow,
             Status = "active"
         };
@@ -110,6 +110,13 @@ public sealed class TableStorageService
         {
             return null;
         }
+    }
+
+    public async Task<RoomEntity> SetRoomActiveDeviceAsync(RoomEntity room, string? activeDeviceId)
+    {
+        room.ActiveDeviceId = NormalizeDeviceId(activeDeviceId);
+        await _rooms.UpdateEntityAsync(room, ETag.All, TableUpdateMode.Replace);
+        return room;
     }
 
     public async Task<QueueItemEntity> AddQueueItemAsync(string roomId, AddQueueItemRequest request)
@@ -155,7 +162,66 @@ public sealed class TableStorageService
         await _queueItems.UpdateEntityAsync(item, ETag.All, TableUpdateMode.Replace);
     }
 
+    private static string? NormalizeDeviceId(string? activeDeviceId)
+    {
+        return string.IsNullOrWhiteSpace(activeDeviceId) ? null : activeDeviceId.Trim();
+    }
+
     private static string GetRoomQueuePartitionKey(string roomId) => $"room_{roomId}";
+}
+
+public sealed class SpotifyApiException : InvalidOperationException
+{
+    public SpotifyApiException(string operation, int statusCode, string responseBody, string? spotifyReason, string? spotifyMessage)
+        : base(BuildMessage(operation, statusCode, spotifyReason, spotifyMessage, responseBody))
+    {
+        Operation = operation;
+        StatusCode = statusCode;
+        ResponseBody = responseBody;
+        SpotifyReason = spotifyReason;
+        SpotifyMessage = spotifyMessage;
+    }
+
+    public string Operation { get; }
+    public int StatusCode { get; }
+    public string ResponseBody { get; }
+    public string? SpotifyReason { get; }
+    public string? SpotifyMessage { get; }
+
+    public static SpotifyApiException FromResponse(string operation, HttpResponseMessage response, string responseBody)
+    {
+        var reason = default(string);
+        var message = default(string);
+
+        try
+        {
+            using var document = JsonDocument.Parse(responseBody);
+            if (document.RootElement.TryGetProperty("error", out var error))
+            {
+                if (error.TryGetProperty("reason", out var reasonElement))
+                {
+                    reason = reasonElement.GetString();
+                }
+
+                if (error.TryGetProperty("message", out var messageElement))
+                {
+                    message = messageElement.GetString();
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            // The raw response body is still included in the exception.
+        }
+
+        return new SpotifyApiException(operation, (int)response.StatusCode, responseBody, reason, message);
+    }
+
+    private static string BuildMessage(string operation, int statusCode, string? spotifyReason, string? spotifyMessage, string responseBody)
+    {
+        var details = spotifyMessage ?? responseBody;
+        return $"Spotify {operation} failed: {statusCode} {spotifyReason} {details}".Trim();
+    }
 }
 
 public sealed class SpotifyService
@@ -258,7 +324,7 @@ public sealed class SpotifyService
         var body = await response.Content.ReadAsStringAsync();
         if (!response.IsSuccessStatusCode)
         {
-            throw new InvalidOperationException($"Spotify search failed: {(int)response.StatusCode} {body}");
+            throw SpotifyApiException.FromResponse("search", response, body);
         }
 
         using var document = JsonDocument.Parse(body);
@@ -293,6 +359,44 @@ public sealed class SpotifyService
         return results;
     }
 
+    public async Task<IReadOnlyList<SpotifyDeviceResult>> GetAvailableDevicesAsync()
+    {
+        var token = await GetValidHostTokenAsync();
+        using var request = new HttpRequestMessage(HttpMethod.Get, "https://api.spotify.com/v1/me/player/devices");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.AccessToken);
+
+        using var response = await _httpClient.SendAsync(request);
+        var body = await response.Content.ReadAsStringAsync();
+        if (!response.IsSuccessStatusCode)
+        {
+            throw SpotifyApiException.FromResponse("devices", response, body);
+        }
+
+        using var document = JsonDocument.Parse(body);
+        var devices = new List<SpotifyDeviceResult>();
+
+        if (!document.RootElement.TryGetProperty("devices", out var devicesElement) || devicesElement.ValueKind != JsonValueKind.Array)
+        {
+            return devices;
+        }
+
+        foreach (var device in devicesElement.EnumerateArray())
+        {
+            devices.Add(new SpotifyDeviceResult
+            {
+                Id = GetNullableString(device, "id"),
+                Name = GetNullableString(device, "name") ?? "Unknown device",
+                Type = GetNullableString(device, "type") ?? "unknown",
+                IsActive = GetBoolean(device, "is_active"),
+                IsRestricted = GetBoolean(device, "is_restricted"),
+                SupportsVolume = GetBoolean(device, "supports_volume"),
+                VolumePercent = GetNullableInt(device, "volume_percent")
+            });
+        }
+
+        return devices;
+    }
+
     public async Task QueueTrackAsync(string accessToken, string trackUri, string? deviceId)
     {
         var url = $"https://api.spotify.com/v1/me/player/queue?uri={Uri.EscapeDataString(trackUri)}";
@@ -308,7 +412,7 @@ public sealed class SpotifyService
         if (!response.IsSuccessStatusCode)
         {
             var body = await response.Content.ReadAsStringAsync();
-            throw new InvalidOperationException($"Spotify queue request failed: {(int)response.StatusCode} {body}");
+            throw SpotifyApiException.FromResponse("queue", response, body);
         }
     }
 
@@ -322,7 +426,7 @@ public sealed class SpotifyService
         var body = await response.Content.ReadAsStringAsync();
         if (!response.IsSuccessStatusCode)
         {
-            throw new InvalidOperationException($"Spotify token request failed: {(int)response.StatusCode} {body}");
+            throw SpotifyApiException.FromResponse("token", response, body);
         }
 
         return JsonSerializer.Deserialize<SpotifyTokenResponse>(body)
@@ -338,7 +442,7 @@ public sealed class SpotifyService
         var body = await response.Content.ReadAsStringAsync();
         if (!response.IsSuccessStatusCode)
         {
-            throw new InvalidOperationException($"Spotify profile request failed: {(int)response.StatusCode} {body}");
+            throw SpotifyApiException.FromResponse("profile", response, body);
         }
 
         using var document = JsonDocument.Parse(body);
@@ -358,5 +462,24 @@ public sealed class SpotifyService
         return _configuration[key]
             ?? _configuration[key.Replace(':', '_')]
             ?? throw new InvalidOperationException($"Missing configuration value '{key}'.");
+    }
+
+    private static string? GetNullableString(JsonElement element, string propertyName)
+    {
+        return element.TryGetProperty(propertyName, out var property) && property.ValueKind != JsonValueKind.Null
+            ? property.GetString()
+            : null;
+    }
+
+    private static int? GetNullableInt(JsonElement element, string propertyName)
+    {
+        return element.TryGetProperty(propertyName, out var property) && property.ValueKind != JsonValueKind.Null
+            ? property.GetInt32()
+            : null;
+    }
+
+    private static bool GetBoolean(JsonElement element, string propertyName)
+    {
+        return element.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.True;
     }
 }
