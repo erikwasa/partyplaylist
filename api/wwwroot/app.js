@@ -10,6 +10,9 @@ const els = {
   roomId: document.querySelector('#room-id'),
   guestLink: document.querySelector('#guest-link'),
   copyLink: document.querySelector('#copy-link'),
+  deviceSelect: document.querySelector('#device-select'),
+  refreshDevices: document.querySelector('#refresh-devices'),
+  saveDevice: document.querySelector('#save-device'),
   requestedBy: document.querySelector('#requested-by'),
   roomInput: document.querySelector('#room-input'),
   searchForm: document.querySelector('#search-form'),
@@ -28,16 +31,23 @@ function init() {
   const roomFromUrl = params.get('roomId') || '';
   const storedRoomId = localStorage.getItem('partyplaylist.roomId') || '';
   const storedName = localStorage.getItem('partyplaylist.requestedBy') || '';
+  const storedDeviceId = localStorage.getItem('partyplaylist.activeDeviceId') || '';
 
   if (roomFromUrl) {
     els.body.classList.add('guest-mode');
   }
 
   els.requestedBy.value = storedName;
+  els.deviceSelect.value = storedDeviceId;
   setRoom(roomFromUrl || storedRoomId, false);
 
   els.createRoom.addEventListener('click', createRoom);
   els.copyLink.addEventListener('click', copyGuestLink);
+  els.refreshDevices.addEventListener('click', loadDevices);
+  els.saveDevice.addEventListener('click', saveDeviceForRoom);
+  els.deviceSelect.addEventListener('change', () => {
+    localStorage.setItem('partyplaylist.activeDeviceId', els.deviceSelect.value);
+  });
   els.roomInput.addEventListener('change', () => setRoom(els.roomInput.value.trim()));
   els.requestedBy.addEventListener('change', () => {
     localStorage.setItem('partyplaylist.requestedBy', els.requestedBy.value.trim());
@@ -45,6 +55,10 @@ function init() {
   els.searchForm.addEventListener('submit', searchTracks);
   els.refreshQueue.addEventListener('click', refreshQueue);
   els.queueNext.addEventListener('click', queueNext);
+
+  if (!els.body.classList.contains('guest-mode')) {
+    loadDevices();
+  }
 
   if (state.roomId) {
     refreshQueue();
@@ -57,9 +71,52 @@ function init() {
 async function createRoom() {
   try {
     setStatus('Creating room...');
-    const room = await api('/rooms', { method: 'POST', body: {} });
+    const room = await api('/rooms', {
+      method: 'POST',
+      body: { activeDeviceId: els.deviceSelect.value || null }
+    });
     setRoom(room.roomId);
+    if (room.activeDeviceId) {
+      els.deviceSelect.value = room.activeDeviceId;
+      localStorage.setItem('partyplaylist.activeDeviceId', room.activeDeviceId);
+    }
     setStatus('Room created. Share the guest link.');
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+}
+
+async function loadDevices() {
+  try {
+    setStatus('Loading Spotify devices...');
+    const selectedDeviceId = els.deviceSelect.value || localStorage.getItem('partyplaylist.activeDeviceId') || '';
+    const devices = await api('/devices');
+    renderDevices(devices, selectedDeviceId);
+    setStatus(devices.length ? 'Devices loaded. Choose the host playback device.' : 'No Spotify devices found. Open Spotify and start playback on the host device.');
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+}
+
+async function saveDeviceForRoom() {
+  const roomId = getCurrentRoomId();
+  if (!roomId) {
+    setStatus('Create or enter a room before saving a device.', true);
+    return;
+  }
+
+  try {
+    const activeDeviceId = els.deviceSelect.value || null;
+    const room = await api('/rooms/' + encodeURIComponent(roomId) + '/device', {
+      method: 'POST',
+      body: { activeDeviceId }
+    });
+    if (room.activeDeviceId) {
+      localStorage.setItem('partyplaylist.activeDeviceId', room.activeDeviceId);
+    } else {
+      localStorage.removeItem('partyplaylist.activeDeviceId');
+    }
+    setStatus(room.activeDeviceId ? 'Playback device saved for this room.' : 'Room will use the current active Spotify device.');
   } catch (error) {
     setStatus(error.message, true);
   }
@@ -150,6 +207,29 @@ async function queueNext() {
     setStatus(result.queued ? 'Next track sent to Spotify.' : result.message);
   } catch (error) {
     setStatus(error.message, true);
+  }
+}
+
+function renderDevices(devices, selectedDeviceId) {
+  els.deviceSelect.replaceChildren();
+
+  const defaultOption = document.createElement('option');
+  defaultOption.value = '';
+  defaultOption.textContent = 'Use current active device';
+  els.deviceSelect.append(defaultOption);
+
+  for (const device of devices) {
+    const option = document.createElement('option');
+    option.value = device.id || '';
+    option.disabled = !device.id || device.isRestricted;
+    option.textContent = device.name + ' · ' + device.type
+      + (device.isActive ? ' · active' : '')
+      + (device.isRestricted ? ' · restricted' : '');
+    els.deviceSelect.append(option);
+  }
+
+  if (selectedDeviceId && [...els.deviceSelect.options].some(option => option.value === selectedDeviceId)) {
+    els.deviceSelect.value = selectedDeviceId;
   }
 }
 
@@ -287,8 +367,10 @@ async function api(path, options = {}) {
   const body = contentType.includes('application/json') ? await response.json() : await response.text();
 
   if (!response.ok) {
-    const message = typeof body === 'object' && body && body.error ? body.error : 'Request failed with HTTP ' + response.status + '.';
-    throw new Error(message);
+    const message = typeof body === 'object' && body
+      ? [body.error, body.hint].filter(Boolean).join(' ')
+      : 'Request failed with HTTP ' + response.status + '.';
+    throw new Error(message || 'Request failed with HTTP ' + response.status + '.');
   }
 
   return body;
