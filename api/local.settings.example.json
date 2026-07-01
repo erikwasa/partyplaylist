@@ -1,0 +1,11 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+    "Tables__ConnectionString": "UseDevelopmentStorage=true",
+    "Spotify__ClientId": "YOUR_SPOTIFY_CLIENT_ID",
+    "Spotify__ClientSecret": "YOUR_SPOTIFY_CLIENT_SECRET",
+    "Spotify__RedirectUri": "http://localhost:7071/api/auth/callback"
+  }
+}
