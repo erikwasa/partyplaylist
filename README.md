@@ -22,6 +22,7 @@ Implemented so far:
 - Manual `queue-next` endpoint that sends the next waiting item to Spotify
 - Manual `play-next` endpoint that starts the next waiting item immediately on Spotify
 - Local MVP frontend served from the Functions app at `/api/app`
+- Azure Bicep infrastructure and GitHub Actions deployment workflow
 
 ## Local prerequisites
 
@@ -72,6 +73,86 @@ Start Spotify login in a browser:
 
 ```text
 http://127.0.0.1:7071/api/auth/login
+```
+
+## Azure deployment
+
+Infrastructure lives in `infra/` and is deployed by `.github/workflows/deploy-api.yml` on pushes to `main`.
+
+Default production values:
+
+- Resource group: `partyplaylist`
+- Region: `swedencentral`
+- Environment: `prod`
+- Function App: `partyplaylist-ew`
+- Azure URL: `https://partyplaylist-ew.azurewebsites.net/api/app`
+- Spotify redirect URI: `https://partyplaylist-ew.azurewebsites.net/api/auth/callback`
+
+The deployment creates:
+
+- Resource group
+- Azure Storage account
+- Blob container for Flex Consumption deployments
+- Azure Functions Flex Consumption plan
+- Linux Azure Function App
+- Log Analytics workspace
+- Application Insights
+- Key Vault secret for the Spotify client secret
+
+### Required GitHub secrets
+
+Create these repository or environment secrets before merging the deployment workflow:
+
+```text
+AZURE_CLIENT_ID
+AZURE_TENANT_ID
+AZURE_SUBSCRIPTION_ID
+SPOTIFY_CLIENT_ID
+SPOTIFY_CLIENT_SECRET
+```
+
+The Azure secrets are used by GitHub Actions OIDC login. The Spotify secret is stored in Key Vault and referenced by the Function App.
+
+### Bootstrap Azure access for GitHub Actions
+
+Run these once from a local shell where Azure CLI is logged in. Replace `<subscription-id>` and `<tenant-id>` with your values.
+
+```powershell
+$subscriptionId = "<subscription-id>"
+$tenantId = "<tenant-id>"
+$githubOwner = "erikwasa"
+$githubRepo = "partyplaylist"
+$appName = "partyplaylist-github-actions"
+
+az account set --subscription $subscriptionId
+
+$app = az ad app create --display-name $appName | ConvertFrom-Json
+$clientId = $app.appId
+
+$sp = az ad sp create --id $clientId | ConvertFrom-Json
+
+az role assignment create `
+  --assignee $sp.id `
+  --role Contributor `
+  --scope "/subscriptions/$subscriptionId"
+
+az ad app federated-credential create `
+  --id $clientId `
+  --parameters "{`"name`":`"github-main-prod`",`"issuer`":`"https://token.actions.githubusercontent.com`",`"subject`":`"repo:$githubOwner/$githubRepo:environment:prod`",`"audiences`":[`"api://AzureADTokenExchange`"]}"
+
+Write-Host "AZURE_CLIENT_ID=$clientId"
+Write-Host "AZURE_TENANT_ID=$tenantId"
+Write-Host "AZURE_SUBSCRIPTION_ID=$subscriptionId"
+```
+
+Then add the printed values as GitHub secrets. Also create a GitHub environment named `prod`, because the workflow targets that environment.
+
+### Register the production Spotify redirect URI
+
+Add this exact URI in the Spotify Developer Dashboard:
+
+```text
+https://partyplaylist-ew.azurewebsites.net/api/auth/callback
 ```
 
 ## Local demo UI
