@@ -121,7 +121,8 @@ h2 {
   justify-content: space-between;
 }
 
-.button-row {
+.button-row,
+.queue-actions {
   flex-wrap: wrap;
 }
 
@@ -147,6 +148,20 @@ h2 {
 
 .device-panel {
   background: #fafafa;
+}
+
+.qr-panel {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.qr-code {
+  background: white;
+  border: 1px solid lightgray;
+  border-radius: 1rem;
+  max-width: 14rem;
+  padding: 0.75rem;
+  width: 100%;
 }
 
 .results,
@@ -196,7 +211,17 @@ h2 {
 }
 
 .queue-item {
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr auto auto;
+}
+
+.queue-actions {
+  display: flex !important;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+
+.queue-actions button {
+  padding: 0.55rem 0.8rem;
 }
 
 .pill {
@@ -208,9 +233,19 @@ h2 {
   padding: 0.35rem 0.65rem;
 }
 
-.status-queued_to_spotify .pill {
+.status-queued_to_spotify .pill,
+.status-playing .pill {
   background: honeydew;
   color: seagreen;
+}
+
+.status-removed {
+  opacity: 0.65;
+}
+
+.status-removed .pill {
+  background: mistyrose;
+  color: firebrick;
 }
 
 .status {
@@ -248,5 +283,9 @@ h2 {
 
   .track-card img {
     width: 100%;
+  }
+
+  .queue-actions {
+    justify-content: stretch;
   }
 }
