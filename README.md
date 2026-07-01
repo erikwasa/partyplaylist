@@ -88,6 +88,20 @@ Default production values:
 - Azure URL: `https://partyplaylist-ew.azurewebsites.net/api/app`
 - Spotify redirect URI: `https://partyplaylist-ew.azurewebsites.net/api/auth/callback`
 
+```
+az deployment sub validate `
+  --location swedencentral `
+  --template-file infra/main.bicep `
+  --parameters `
+    location=swedencentral `
+    resourceGroupName=partyplaylist `
+    environmentName=prod `
+    functionAppName=partyplaylist-ew `
+    spotifyClientId="xxx" `
+    spotifyClientSecret="xxx" `
+    spotifyRedirectUri="https://partyplaylist-ew.azurewebsites.net/api/auth/callback"
+```
+
 The deployment creates:
 
 - Resource group
@@ -118,8 +132,8 @@ The Azure secrets are used by GitHub Actions OIDC login. The Spotify secret is s
 Run these once from a local shell where Azure CLI is logged in. Replace `<subscription-id>` and `<tenant-id>` with your values.
 
 ```powershell
-$subscriptionId = "<subscription-id>"
-$tenantId = "<tenant-id>"
+$subscriptionId = "5957e955-1bb3-4fad-9b79-b2669eb0b734"
+$tenantId = "04368cd7-79db-48c2-a243-1f6c2025dec8"
 $githubOwner = "erikwasa"
 $githubRepo = "partyplaylist"
 $appName = "partyplaylist-github-actions"
