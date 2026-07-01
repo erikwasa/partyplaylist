@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Azure;
@@ -13,6 +14,13 @@ public sealed class TableStorageService
     private const string QueueItemsTableName = "QueueItems";
     private const string SpotifyTokensTableName = "SpotifyTokens";
     private const string OAuthStatesTableName = "OAuthStates";
+
+    private static readonly HashSet<string> ActiveDuplicateStatuses =
+    [
+        QueueItemStatuses.Waiting,
+        QueueItemStatuses.QueuedToSpotify,
+        QueueItemStatuses.Playing
+    ];
 
     private readonly TableClient _rooms;
     private readonly TableClient _queueItems;
@@ -84,12 +92,13 @@ public sealed class TableStorageService
         }
     }
 
-    public async Task<RoomEntity> CreateRoomAsync(string hostSpotifyUserId, string? activeDeviceId)
+    public async Task<RoomEntity> CreateRoomAsync(string hostSpotifyUserId, string? activeDeviceId, string hostCodeHash)
     {
         var room = new RoomEntity
         {
             RowKey = Guid.NewGuid().ToString("N")[..8],
             HostSpotifyUserId = hostSpotifyUserId,
+            HostCodeHash = hostCodeHash,
             ActiveDeviceId = NormalizeDeviceId(activeDeviceId),
             CreatedAt = DateTimeOffset.UtcNow,
             Status = "active"
@@ -150,10 +159,42 @@ public sealed class TableStorageService
         return items.OrderBy(item => item.RowKey).ToList();
     }
 
+    public async Task<QueueItemEntity?> GetQueueItemAsync(string roomId, string itemId)
+    {
+        try
+        {
+            var response = await _queueItems.GetEntityAsync<QueueItemEntity>(GetRoomQueuePartitionKey(roomId), itemId);
+            return response.Value;
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404)
+        {
+            return null;
+        }
+    }
+
+    public async Task<QueueItemEntity?> FindActiveDuplicateQueueItemAsync(string roomId, string trackUri, string? excludedItemId = null)
+    {
+        var queue = await GetQueueAsync(roomId);
+        return queue.FirstOrDefault(item =>
+            !string.Equals(item.RowKey, excludedItemId, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(item.TrackUri, trackUri.Trim(), StringComparison.OrdinalIgnoreCase)
+            && ActiveDuplicateStatuses.Contains(item.Status));
+    }
+
     public async Task<QueueItemEntity?> GetNextWaitingQueueItemAsync(string roomId)
     {
         var queue = await GetQueueAsync(roomId);
         return queue.FirstOrDefault(item => item.Status == QueueItemStatuses.Waiting);
+    }
+
+    public async Task MarkCurrentPlayingAsPlayedAsync(string roomId)
+    {
+        var queue = await GetQueueAsync(roomId);
+        foreach (var item in queue.Where(item => item.Status == QueueItemStatuses.Playing))
+        {
+            item.Status = QueueItemStatuses.Played;
+            await _queueItems.UpdateEntityAsync(item, ETag.All, TableUpdateMode.Replace);
+        }
     }
 
     public async Task UpdateQueueItemStatusAsync(QueueItemEntity item, string status)
@@ -168,6 +209,41 @@ public sealed class TableStorageService
     }
 
     private static string GetRoomQueuePartitionKey(string roomId) => $"room_{roomId}";
+}
+
+public static class HostCodeService
+{
+    public const string HeaderName = "X-Host-Code";
+
+    public static string GenerateCode()
+    {
+        return Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
+    }
+
+    public static string HashCode(string hostCode)
+    {
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(hostCode));
+        return Convert.ToBase64String(bytes);
+    }
+
+    public static bool VerifyCode(string hostCode, string storedHash)
+    {
+        try
+        {
+            var expected = Convert.FromBase64String(storedHash);
+            var actual = SHA256.HashData(Encoding.UTF8.GetBytes(hostCode));
+            return actual.Length == expected.Length && CryptographicOperations.FixedTimeEquals(actual, expected);
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
+    }
+
+    private static string Base64UrlEncode(byte[] bytes)
+    {
+        return Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+    }
 }
 
 public sealed class SpotifyApiException : InvalidOperationException
@@ -413,6 +489,26 @@ public sealed class SpotifyService
         {
             var body = await response.Content.ReadAsStringAsync();
             throw SpotifyApiException.FromResponse("queue", response, body);
+        }
+    }
+
+    public async Task StartPlaybackAsync(string accessToken, string trackUri, string? deviceId)
+    {
+        var url = "https://api.spotify.com/v1/me/player/play";
+        if (!string.IsNullOrWhiteSpace(deviceId))
+        {
+            url += $"?device_id={Uri.EscapeDataString(deviceId)}";
+        }
+
+        using var request = new HttpRequestMessage(HttpMethod.Put, url);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        request.Content = new StringContent(JsonSerializer.Serialize(new { uris = new[] { trackUri } }), Encoding.UTF8, "application/json");
+
+        using var response = await _httpClient.SendAsync(request);
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync();
+            throw SpotifyApiException.FromResponse("playback", response, body);
         }
     }
 

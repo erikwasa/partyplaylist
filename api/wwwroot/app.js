@@ -9,6 +9,7 @@ const els = {
   roomCard: document.querySelector('#room-card'),
   roomId: document.querySelector('#room-id'),
   guestLink: document.querySelector('#guest-link'),
+  guestQr: document.querySelector('#guest-qr'),
   copyLink: document.querySelector('#copy-link'),
   deviceSelect: document.querySelector('#device-select'),
   refreshDevices: document.querySelector('#refresh-devices'),
@@ -20,6 +21,7 @@ const els = {
   searchResults: document.querySelector('#search-results'),
   refreshQueue: document.querySelector('#refresh-queue'),
   queueNext: document.querySelector('#queue-next'),
+  playNext: document.querySelector('#play-next'),
   queueList: document.querySelector('#queue-list'),
   status: document.querySelector('#status')
 };
@@ -55,6 +57,7 @@ function init() {
   els.searchForm.addEventListener('submit', searchTracks);
   els.refreshQueue.addEventListener('click', refreshQueue);
   els.queueNext.addEventListener('click', queueNext);
+  els.playNext.addEventListener('click', playNextNow);
 
   if (!els.body.classList.contains('guest-mode')) {
     loadDevices();
@@ -75,12 +78,15 @@ async function createRoom() {
       method: 'POST',
       body: { activeDeviceId: els.deviceSelect.value || null }
     });
+    if (room.hostCode) {
+      saveHostCode(room.roomId, room.hostCode);
+    }
     setRoom(room.roomId);
     if (room.activeDeviceId) {
       els.deviceSelect.value = room.activeDeviceId;
       localStorage.setItem('partyplaylist.activeDeviceId', room.activeDeviceId);
     }
-    setStatus('Room created. Share the guest link.');
+    setStatus('Room created. Share the guest link or QR code.');
   } catch (error) {
     setStatus(error.message, true);
   }
@@ -109,7 +115,8 @@ async function saveDeviceForRoom() {
     const activeDeviceId = els.deviceSelect.value || null;
     const room = await api('/rooms/' + encodeURIComponent(roomId) + '/device', {
       method: 'POST',
-      body: { activeDeviceId }
+      body: { activeDeviceId },
+      host: true
     });
     if (room.activeDeviceId) {
       localStorage.setItem('partyplaylist.activeDeviceId', room.activeDeviceId);
@@ -201,10 +208,65 @@ async function queueNext() {
   }
 
   try {
-    setStatus('Sending next waiting track to Spotify...');
-    const result = await api('/rooms/' + encodeURIComponent(roomId) + '/queue-next', { method: 'POST', body: {} });
+    setStatus('Sending next waiting track to Spotify queue...');
+    const result = await api('/rooms/' + encodeURIComponent(roomId) + '/queue-next', {
+      method: 'POST',
+      body: {},
+      host: true
+    });
     await refreshQueue();
-    setStatus(result.queued ? 'Next track sent to Spotify.' : result.message);
+    setStatus(result.queued ? 'Next track sent to Spotify queue.' : result.message);
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+}
+
+async function playNextNow() {
+  const roomId = getCurrentRoomId();
+  if (!roomId) {
+    setStatus('Create or enter a room before starting playback.', true);
+    return;
+  }
+
+  try {
+    setStatus('Starting next waiting track on Spotify...');
+    const result = await api('/rooms/' + encodeURIComponent(roomId) + '/play-next', {
+      method: 'POST',
+      body: {},
+      host: true
+    });
+    await refreshQueue();
+    setStatus(result.played ? 'Next track started on Spotify.' : result.message);
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+}
+
+async function removeQueueItem(itemId) {
+  const roomId = getCurrentRoomId();
+  try {
+    await api('/rooms/' + encodeURIComponent(roomId) + '/queue/' + encodeURIComponent(itemId) + '/remove', {
+      method: 'POST',
+      body: {},
+      host: true
+    });
+    await refreshQueue();
+    setStatus('Queue item removed.');
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+}
+
+async function requeueItem(itemId) {
+  const roomId = getCurrentRoomId();
+  try {
+    await api('/rooms/' + encodeURIComponent(roomId) + '/queue/' + encodeURIComponent(itemId) + '/requeue', {
+      method: 'POST',
+      body: {},
+      host: true
+    });
+    await refreshQueue();
+    setStatus('Queue item moved back to waiting.');
   } catch (error) {
     setStatus(error.message, true);
   }
@@ -276,6 +338,8 @@ function renderQueue(queue) {
     return;
   }
 
+  const isHost = !els.body.classList.contains('guest-mode') && Boolean(getHostCode(state.roomId));
+
   for (const item of queue) {
     const row = document.createElement('li');
     row.className = 'queue-item status-' + item.status;
@@ -292,6 +356,28 @@ function renderQueue(queue) {
     status.textContent = item.status;
 
     row.append(details, status);
+
+    if (isHost) {
+      const actions = document.createElement('div');
+      actions.className = 'queue-actions host-only';
+
+      if (item.status === 'removed') {
+        const requeue = document.createElement('button');
+        requeue.type = 'button';
+        requeue.textContent = 'Requeue';
+        requeue.addEventListener('click', () => requeueItem(item.id));
+        actions.append(requeue);
+      } else {
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.textContent = 'Remove';
+        remove.addEventListener('click', () => removeQueueItem(item.id));
+        actions.append(remove);
+      }
+
+      row.append(actions);
+    }
+
     els.queueList.append(row);
   }
 }
@@ -312,10 +398,12 @@ function setRoom(roomId, persist = true) {
     els.roomCard.classList.remove('is-hidden');
     els.roomId.textContent = roomId;
     els.guestLink.value = window.location.origin + '/api/app?roomId=' + encodeURIComponent(roomId);
+    els.guestQr.src = '/api/rooms/' + encodeURIComponent(roomId) + '/qr';
     startPolling();
     refreshQueue();
   } else {
     els.roomCard.classList.add('is-hidden');
+    els.guestQr.removeAttribute('src');
     stopPolling();
   }
 }
@@ -339,6 +427,18 @@ async function copyGuestLink() {
   }
 }
 
+function saveHostCode(roomId, hostCode) {
+  localStorage.setItem(getHostCodeStorageKey(roomId), hostCode);
+}
+
+function getHostCode(roomId) {
+  return roomId ? localStorage.getItem(getHostCodeStorageKey(roomId)) || '' : '';
+}
+
+function getHostCodeStorageKey(roomId) {
+  return 'partyplaylist.hostCode.' + roomId;
+}
+
 function startPolling() {
   stopPolling();
   state.pollHandle = window.setInterval(refreshQueue, 4000);
@@ -356,6 +456,13 @@ async function api(path, options = {}) {
     method: options.method || 'GET',
     headers: {}
   };
+
+  if (options.host) {
+    const hostCode = getHostCode(getCurrentRoomId());
+    if (hostCode) {
+      request.headers['X-Host-Code'] = hostCode;
+    }
+  }
 
   if (options.body !== undefined) {
     request.headers['Content-Type'] = 'application/json';

@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
+using QRCoder;
 
 namespace PartyPlaylist.Api;
 
@@ -150,9 +151,32 @@ public sealed class RoomFunctions
     {
         var body = await request.ReadJsonAsync<CreateRoomRequest>() ?? new CreateRoomRequest();
         var hostToken = await _spotify.GetValidHostTokenAsync();
-        var room = await _storage.CreateRoomAsync(hostToken.SpotifyUserId, body.ActiveDeviceId);
+        var hostCode = HostCodeService.GenerateCode();
+        var room = await _storage.CreateRoomAsync(hostToken.SpotifyUserId, body.ActiveDeviceId, HostCodeService.HashCode(hostCode));
 
-        return await request.JsonAsync(ToRoomResponse(room), HttpStatusCode.Created);
+        return await request.JsonAsync(ToRoomResponse(room, hostCode), HttpStatusCode.Created);
+    }
+
+    [Function("GetRoomQr")]
+    public async Task<HttpResponseData> Qr(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "rooms/{roomId}/qr")] HttpRequestData request,
+        string roomId)
+    {
+        var room = await _storage.GetRoomAsync(roomId);
+        if (room is null)
+        {
+            return await request.JsonAsync(new { error = "Room not found." }, HttpStatusCode.NotFound);
+        }
+
+        var guestLink = request.GetGuestLink(room.RowKey);
+        using var qrCodeData = QRCodeGenerator.GenerateQrCode(guestLink, QRCodeGenerator.ECCLevel.Q);
+        using var svgRenderer = new SvgQRCode(qrCodeData);
+        var svg = svgRenderer.GetGraphic(8);
+
+        var response = request.CreateResponse(HttpStatusCode.OK);
+        response.Headers.Add("Content-Type", "image/svg+xml; charset=utf-8");
+        await response.WriteStringAsync(svg);
+        return response;
     }
 
     [Function("SetRoomDevice")]
@@ -164,6 +188,11 @@ public sealed class RoomFunctions
         if (room is null)
         {
             return await request.JsonAsync(new { error = "Room not found." }, HttpStatusCode.NotFound);
+        }
+
+        if (await request.RequireHostAsync(room) is { } denied)
+        {
+            return denied;
         }
 
         var body = await request.ReadJsonAsync<UpdateRoomDeviceRequest>() ?? new UpdateRoomDeviceRequest();
@@ -201,11 +230,12 @@ public sealed class RoomFunctions
         return await request.JsonAsync(ToRoomResponse(room));
     }
 
-    private static object ToRoomResponse(RoomEntity room) => new
+    private static object ToRoomResponse(RoomEntity room, string? hostCode = null) => new
     {
         roomId = room.RowKey,
         room.Status,
         room.ActiveDeviceId,
+        hostCode,
         room.CreatedAt
     };
 }
@@ -255,6 +285,16 @@ public sealed class QueueFunctions
             return await request.JsonAsync(new { error = "trackUri, trackName, artistName, and requestedBy are required." }, HttpStatusCode.BadRequest);
         }
 
+        var duplicate = await _storage.FindActiveDuplicateQueueItemAsync(roomId, body.TrackUri);
+        if (duplicate is not null)
+        {
+            return await request.JsonAsync(new
+            {
+                error = "This track is already in the room queue.",
+                duplicate = ToResponse(duplicate)
+            }, HttpStatusCode.Conflict);
+        }
+
         var item = await _storage.AddQueueItemAsync(roomId, body);
         return await request.JsonAsync(ToResponse(item), HttpStatusCode.Created);
     }
@@ -268,6 +308,11 @@ public sealed class QueueFunctions
         if (room is null)
         {
             return await request.JsonAsync(new { error = "Room not found." }, HttpStatusCode.NotFound);
+        }
+
+        if (await request.RequireHostAsync(room) is { } denied)
+        {
+            return denied;
         }
 
         var item = await _storage.GetNextWaitingQueueItemAsync(roomId);
@@ -289,6 +334,108 @@ public sealed class QueueFunctions
         {
             return await request.SpotifyErrorAsync(ex);
         }
+    }
+
+    [Function("PlayNext")]
+    public async Task<HttpResponseData> PlayNext(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "rooms/{roomId}/play-next")] HttpRequestData request,
+        string roomId)
+    {
+        var room = await _storage.GetRoomAsync(roomId);
+        if (room is null)
+        {
+            return await request.JsonAsync(new { error = "Room not found." }, HttpStatusCode.NotFound);
+        }
+
+        if (await request.RequireHostAsync(room) is { } denied)
+        {
+            return denied;
+        }
+
+        var item = await _storage.GetNextWaitingQueueItemAsync(roomId);
+        if (item is null)
+        {
+            return await request.JsonAsync(new { played = false, message = "No waiting tracks." });
+        }
+
+        var token = await _spotify.GetValidHostTokenAsync();
+
+        try
+        {
+            await _spotify.StartPlaybackAsync(token.AccessToken, item.TrackUri, room.ActiveDeviceId);
+            await _storage.MarkCurrentPlayingAsPlayedAsync(roomId);
+            await _storage.UpdateQueueItemStatusAsync(item, QueueItemStatuses.Playing);
+
+            return await request.JsonAsync(new { played = true, item = ToResponse(item) });
+        }
+        catch (SpotifyApiException ex)
+        {
+            return await request.SpotifyErrorAsync(ex);
+        }
+    }
+
+    [Function("RemoveQueueItem")]
+    public async Task<HttpResponseData> RemoveQueueItem(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "rooms/{roomId}/queue/{itemId}/remove")] HttpRequestData request,
+        string roomId,
+        string itemId)
+    {
+        var room = await _storage.GetRoomAsync(roomId);
+        if (room is null)
+        {
+            return await request.JsonAsync(new { error = "Room not found." }, HttpStatusCode.NotFound);
+        }
+
+        if (await request.RequireHostAsync(room) is { } denied)
+        {
+            return denied;
+        }
+
+        var item = await _storage.GetQueueItemAsync(roomId, itemId);
+        if (item is null)
+        {
+            return await request.JsonAsync(new { error = "Queue item not found." }, HttpStatusCode.NotFound);
+        }
+
+        await _storage.UpdateQueueItemStatusAsync(item, QueueItemStatuses.Removed);
+        return await request.JsonAsync(new { removed = true, item = ToResponse(item) });
+    }
+
+    [Function("RequeueQueueItem")]
+    public async Task<HttpResponseData> RequeueQueueItem(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "rooms/{roomId}/queue/{itemId}/requeue")] HttpRequestData request,
+        string roomId,
+        string itemId)
+    {
+        var room = await _storage.GetRoomAsync(roomId);
+        if (room is null)
+        {
+            return await request.JsonAsync(new { error = "Room not found." }, HttpStatusCode.NotFound);
+        }
+
+        if (await request.RequireHostAsync(room) is { } denied)
+        {
+            return denied;
+        }
+
+        var item = await _storage.GetQueueItemAsync(roomId, itemId);
+        if (item is null)
+        {
+            return await request.JsonAsync(new { error = "Queue item not found." }, HttpStatusCode.NotFound);
+        }
+
+        var duplicate = await _storage.FindActiveDuplicateQueueItemAsync(roomId, item.TrackUri, item.RowKey);
+        if (duplicate is not null)
+        {
+            return await request.JsonAsync(new
+            {
+                error = "Cannot requeue because this track is already active in the room queue.",
+                duplicate = ToResponse(duplicate)
+            }, HttpStatusCode.Conflict);
+        }
+
+        await _storage.UpdateQueueItemStatusAsync(item, QueueItemStatuses.Waiting);
+        return await request.JsonAsync(new { requeued = true, item = ToResponse(item) });
     }
 
     private static object ToResponse(QueueItemEntity item) => new
@@ -347,6 +494,35 @@ internal static class HttpRequestDataExtensions
             spotifyResponse = ex.ResponseBody,
             hint
         }, statusCode);
+    }
+
+    public static async Task<HttpResponseData?> RequireHostAsync(this HttpRequestData request, RoomEntity room)
+    {
+        if (string.IsNullOrWhiteSpace(room.HostCodeHash))
+        {
+            return await request.JsonAsync(new
+            {
+                error = "This room was created before host controls were protected. Create a new room."
+            }, HttpStatusCode.Forbidden);
+        }
+
+        if (!request.Headers.TryGetValues(HostCodeService.HeaderName, out var values))
+        {
+            return await request.JsonAsync(new { error = "Missing host authorization." }, HttpStatusCode.Forbidden);
+        }
+
+        var hostCode = values.FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(hostCode) || !HostCodeService.VerifyCode(hostCode, room.HostCodeHash))
+        {
+            return await request.JsonAsync(new { error = "Invalid host authorization." }, HttpStatusCode.Forbidden);
+        }
+
+        return null;
+    }
+
+    public static string GetGuestLink(this HttpRequestData request, string roomId)
+    {
+        return $"{request.Url.Scheme}://{request.Url.Authority}/api/app?roomId={Uri.EscapeDataString(roomId)}";
     }
 
     public static IReadOnlyDictionary<string, string> ParseQuery(this HttpRequestData request)
