@@ -13,6 +13,7 @@ Implemented so far:
 - Spotify OAuth login and callback
 - Host token storage and refresh in Table Storage
 - Spotify track search through the host token
+- Spotify device discovery
 - Room creation
 - Queue item creation and listing
 - Manual `queue-next` endpoint that sends the next waiting item to Spotify
@@ -79,10 +80,14 @@ http://127.0.0.1:7071/api/app
 
 Host flow:
 
-1. Click **Create room**.
-2. Copy the generated guest link.
-3. Keep the page open to view the queue.
-4. Click **Queue next** to send the next waiting song to Spotify.
+1. Open Spotify on the host computer, phone, or speaker.
+2. Start playback manually once so Spotify exposes an active device.
+3. In Party Playlist, click **Refresh devices**.
+4. Select the playback device and click **Save device**.
+5. Click **Create room**.
+6. Copy the generated guest link.
+7. Keep the page open to view the queue.
+8. Click **Queue next** to send the next waiting song to Spotify.
 
 Guest flow:
 
@@ -105,13 +110,33 @@ The value in Spotify Developer Dashboard and `Spotify__RedirectUri` must match e
 
 After changing `local.settings.json`, restart the Functions host so the app reloads the new redirect URI.
 
+## Spotify device troubleshooting
+
+If **Queue next** says no active Spotify device was found:
+
+1. Open the official Spotify app as the host user.
+2. Start playing any track manually.
+3. Return to Party Playlist and click **Refresh devices**.
+4. Select the active, unrestricted device and click **Save device**.
+5. Try **Queue next** again.
+
+Restricted devices cannot be controlled through the Spotify Web API.
+
+You can also inspect devices directly:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:7071/api/devices
+```
+
 ## API endpoints
 
 - `GET /api/health`
 - `GET /api/app`
 - `GET /api/auth/login`
 - `GET /api/auth/callback`
+- `GET /api/devices`
 - `POST /api/rooms`
+- `POST /api/rooms/{roomId}/device`
 - `GET /api/search?query=...`
 - `GET /api/rooms/{roomId}/queue`
 - `POST /api/rooms/{roomId}/queue`
